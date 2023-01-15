@@ -1,0 +1,169 @@
+# Take an empty USB disk and copy user home directory into an encrypted partition
+# This Ansible playbook is:
+# 1. Borrows heavily from article written by [Peter Gervase](https://www.redhat.com/sysadmin/encrypt-single-filesystem)
+# 2. This playbook requires elevated privileges
+# 3. Some environment variables MUST be defined on the ansible CLI
+# How to run:
+# ```ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml```
+# Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
+---
+- name: Take an empty USB disk and copy user home directory into an encrypted partition
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    volgrp: "usbluks_vg"
+    logicalvol: "backuplv"
+    cryptns: "usbluks"
+    cryptdevice: "/dev/mapper/{{ cryptns }}"
+    destination_dir: "/mnt"
+  vars_prompt:
+    - name: source_dir
+      prompt: "Enter name of the directory to back up"
+      private: false
+      default: "/home/josevnz"
+    - name: target_device
+      prompt: "Enter name of the USB device"
+      private: false
+      default: "/dev/sda"
+    - name: passphrase
+      prompt: "Enter the passphrase to be used to protect the target device"
+      private: true
+  tasks:
+    - name: Basic setup and verification for target system
+      block:
+        - name: Facts for {{ target_device }}
+          community.general.parted:
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_facts
+          tags: parted_info
+
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ target_facts }}"
+          when: target_facts is defined
+          tags: print_facts
+        - name: Unmount USB drive
+          ansible.posix.mount:
+            path: "{{ destination_dir }}"
+            state: absent
+          when: target_facts is defined
+          tags: unmount
+        - name: Destroy existing partition if found, update target_facts
+          community.general.parted:
+            device: "{{ target_device }}"
+            number: 1
+            state: "absent"
+            unit: "GB"
+          when: target_facts is defined and destroy_partition is defined
+          register: target_facts
+          tags: destroy_partition
+
+        - name: Abort with an error If there are any partitions for {{ target_device }}
+          ansible.builtin.debug:
+            msg: -|
+              {{ target_device }} is already partitioned, {{ target_facts['partitions'] }}.
+              Size is {{ target_facts['disk']['size'] }} GB
+          failed_when: target_facts['partitions'] is defined and (target_facts['partitions'] | length > 0) and not ansible_check_mode
+          tags: fail_on_existing_part
+
+        - name: Install crysetup
+          ansible.builtin.dnf:
+            name: cryptsetup
+            state: installed
+
+    - name: Get destination device details
+      block:
+        - name: Get info on destination partition
+          community.general.parted:
+            device: "{{ target_device }}"
+            number: 1
+            state: info
+          register: info_output
+          tags: parted_info
+        - name: Print info_output
+          ansible.builtin.debug:
+            msg: "{{ info_output }}"
+          tags: parted_print
+
+    - name: Create partition
+      block:
+        - name: Create new partition
+          community.general.parted:
+            device: "{{ target_device }}"
+            number: 1
+            state: present
+            part_end: "100%"
+          register: parted_output
+          tags: parted_create
+      rescue:
+        - name: Parted failed
+          ansible.builtin.fail:
+            msg: 'Parted failed:  {{ parted_output }}'
+
+    - name: LUKS and filesystem tasks
+      block:
+        - name: Create LUKS container with passphrase
+          community.crypto.luks_device:
+            device: "{{ target_device }}1"
+            state: present
+            name: "{{ cryptns }}"
+            passphrase: "{{ passphrase }}"
+          tags: luks_create
+        - name: Open luks container
+          community.crypto.luks_device:
+            device: "{{ target_device }}1"
+            state: opened
+            name: "{{ cryptns }}"
+            passphrase: "{{ passphrase }}"
+          tags: luks_open
+        - name: Create {{ cryptdevice }}
+          community.general.system.lvg:
+            vg: "{{ volgrp }}"
+            pvs: "{{ cryptdevice }}"
+            force: true
+            state: "present"
+          when: not ansible_check_mode
+          tags: lvm_volgrp
+        - name: Create a logvol in my new vg
+          community.general.system.lvol:
+            vg: "{{ volgrp }}"
+            lv: "{{ logicalvol }}"
+            size: "+100%FREE"
+          when: not ansible_check_mode
+          tags: lvm_logvol
+        - name: Create a filesystem for the USB drive (man mkfs.btrfs for options explanation)
+          community.general.system.filesystem:
+            fstype: btrfs
+            dev: "/dev/mapper/{{ volgrp }}-{{ logicalvol }}"
+            force: true
+            opts: --data SINGLE --metadata SINGLE --mixed --label backup --features skinny-metadata,no-holes
+          when: not ansible_check_mode
+          tags: mkfs
+        - name: Mount USB drive (use a dummy fstab to avoid changing real /etc/fstab)
+          ansible.posix.mount:
+            path: "{{ destination_dir }}"
+            src: "/dev/mapper/{{ volgrp }}-{{ logicalvol }}"
+            state: mounted
+            fstype: btrfs
+            fstab: /tmp/tmp.fstab
+          when: not ansible_check_mode
+          tags: mount
+    - name: Backup stage
+      block:
+        - name: Backup using rsync
+          ansible.posix.synchronize:
+            archive: true
+            compress: false
+            dest: "{{ destination_dir }}"
+            owner: true
+            partial: true
+            recursive: true
+            src: "{{ source_dir }}"
+            rsync_opts:
+              - "--exclude Downloads"
+              - "--exclude .cache"
+              - "--exclude .gradle/caches"
+          tags: backup
