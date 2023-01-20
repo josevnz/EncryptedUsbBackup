@@ -194,6 +194,45 @@ Let's see it running:
 
 With this information we can test before hand if the USB drive has enough space to save our files.
 
+So we are good to go, right? Well, we live on an imperfect world where [counterfit USB drives are sold](https://datarecovery.com/2022/03/the-2tb-flash-drive-scam-why-high-capacity-flash-drives-are-fakes/), they do tricks to advertise higher capacity that is really supported.
+
+Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/introduction.html) we can run with brand new media to make sure the capacity is indeed what we think we purchased, will cover that next
+
+### Trust but verify
+
+Depending of the size of the disk this task can be quick or take a long time, for this part
+
+```yaml
+
+```
+
+I don't want to force this task every time I run my encrypted backup with media I know is good, so unless to enable it on the prompt it will not run.
+
+How does it look ([running_f3.yaml](running_f3.yaml))?:
+
+```shell
+[josevnz@dmaf5 EncryptedUsbBackup]$ ansible-playbook running_f3.yaml
+[WARNING]: No inventory was parsed, only implicit localhost is available
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+Enter name of the USB device [sda]: 
+Check the USB drive real capacity with f3 (y/n) [n]: y
+
+PLAY [USB drive verification] ***************************************************************************************************************************************************************
+
+TASK [Testing with f3 sda] ******************************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Print facts for /dev/sda] *************************************************************************************************************************************************************
+ok: [localhost] => {
+    "msg": "/dev/sda -> {'changed': False, 'stdout': 'F3 probe 8.0\\nCopyright (C) 2010 Digirati Internet LTDA.\\nThis is free software; see the source for copying conditions.\\n\\nWARNING: Probing normally takes from a few seconds to 15 minutes, but\\n         it can take longer. Please be patient.\\n\\nProbe finished, recovering blocks... Done\\n\\nGood news: The device `/dev/sda\\' is the real thing\\n\\nDevice geometry:\\n\\t         *Usable* size: 960.00 MB (1966080 blocks)\\n\\t        Announced size: 960.00 MB (1966080 blocks)\\n\\t                Module: 1.00 GB (2^30 Bytes)\\n\\tApproximate cache size: 0.00 Byte (0 blocks), need-reset=no\\n\\t   Physical block size: 512.00 Byte (2^9 Bytes)\\n\\nProbe time: 4\\'57\"', 'stderr': '', 'rc': 0, 'cmd': ['/usr/bin/f3probe', '/dev/sda'], 'start': '2023-01-20 15:57:24.886985', 'end': '2023-01-20 16:04:10.578318', 'delta': '0:06:45.691333', 'msg': '', 'stdout_lines': ['F3 probe 8.0', 'Copyright (C) 2010 Digirati Internet LTDA.', 'This is free software; see the source for copying conditions.', '', 'WARNING: Probing normally takes from a few seconds to 15 minutes, but', '         it can take longer. Please be patient.', '', 'Probe finished, recovering blocks... Done', '', \"Good news: The device `/dev/sda' is the real thing\", '', 'Device geometry:', '\\t         *Usable* size: 960.00 MB (1966080 blocks)', '\\t        Announced size: 960.00 MB (1966080 blocks)', '\\t                Module: 1.00 GB (2^30 Bytes)', '\\tApproximate cache size: 0.00 Byte (0 blocks), need-reset=no', '\\t   Physical block size: 512.00 Byte (2^9 Bytes)', '', 'Probe time: 4\\'57\"'], 'stderr_lines': [], 'failed': False}"
+}
+
+PLAY RECAP **********************************************************************************************************************************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+```
+
+Took 5+ minutes on a small but slow USB drive.
+
 ### Putting everything together
 Here is how we can implement these requirements:
 

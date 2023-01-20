@@ -1,0 +1,36 @@
+# This Ansible playbook just shows you to run f3 to check if a USB reported size is legitimate
+# How to run:
+# ```ansible-playbook running_f3.yaml```
+# Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
+---
+- name: USB drive verification
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_prompt:
+    - name: device
+      prompt: "Enter name of the USB device"
+      private: false
+      default: "sda"
+    - name: paranoid
+      prompt: "Check the USB drive real capacity with f3 (y/n)"
+      default: "n"
+      private: false
+  vars:
+    target_device: "/dev/{{ device }}"
+  tasks:
+    - name: Verify with f3 {{ device }}
+      block:
+        - name: Testing with f3 {{ device }}
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/f3probe
+              - "{{ target_device }}"
+          register: f3_capture
+          changed_when: "f3_capture.rc != 0"
+          when: paranoid is defined and paranoid == "y"
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ target_device }} -> {{ f3_capture }}"
+          when: f3_capture is defined

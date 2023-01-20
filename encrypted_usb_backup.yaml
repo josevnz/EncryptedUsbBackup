@@ -24,8 +24,12 @@
     - name: passphrase
       prompt: "Enter the passphrase to be used to protect the target device"
       private: true
+    - name: paranoid
+      prompt: "Leave blank if you don't want to check the USB drive real capacity with f3"
+      private: false
     - name: verify
-      prompt: "Verify backup at the end (leave empty to skip)"
+      prompt: "Verify backup at the end (y/n)"
+      default: "n"
       private: false
   vars:
     volgrp: "usbluks_vg"
@@ -216,7 +220,7 @@
               - "--exclude .cache"
               - "--exclude .gradle/caches"
     - name: Backup verification
-      when: verify is defined  # This task is slow
+      when: verify is defined and verify == "y"
       tags: backup_block
       block:
         - name: Facts for {{ target_device }}
