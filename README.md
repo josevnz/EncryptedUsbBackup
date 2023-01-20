@@ -49,7 +49,7 @@ t mean you cannot have an Ansible playbook for such special server, in fact it m
 
 _Ansible and other specialized provisioning tools_ ensure than the state of the servers is uniform, and doesn't change by accident.
 
-_It is Ansible then a bad tool to handle pet servers_?. It depends on the task at hand. I want to show you on this article how you can also use an Ansible playbook to make an encrypted backup of your home directory, so you can keep your workstation, properly backed up.
+_It is Ansible then a bad tool to handle pet servers_?. It is actually quite good. I want to show you on this article how you can also use an Ansible playbook to make an encrypted backup of your home directory, so you can keep your workstation, properly backed up.
 
 ### Requirements
 * SUDO (to run programs that require elevated privileges like creating a filesystem, mounting a disk)
@@ -83,9 +83,72 @@ ansible-galaxy collection install community.general
 You probably have seen Ansible playbooks before, but this one has a few special features:
 
 1. It doesn't use SSH to connect to a remote host. The 'remote' host is localhost (the same machine where the playbook runs), so we use a special time of connection called 'local'
+2. It uses special fact gathering to speed up the device feature detection. Will elaborate more in the next section.
 2. Define variables to make the playbook re-usable, but we need to prompt the user for the values as opposed to defined them on the command line. Pet servers have unique features, so it is better to ask the user for some choices interactively as the playbook runs.
 3. Use tags. If we want to run just parts of this playbook we can skip to the desired target (```ansible-playbook --tag $mytag encrypted_us_backup.yaml```)
 
+### Getting your facts straight
+
+Every time you run an Ansible playbook, it collects facts about your target system, so it can operate properly. But for our task it is overkill and we only need information about the devices, while we can ignore other details like dns, python to mention a few.
+
+First disable the general 'gather_facts', then override with a task below using the setup module, just enabling devices and mounts.
+
+After that you can use the facts in any way you see fit:
+
+```yaml
+---
+- name: Restricted fact gathering example
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_prompt:
+    - name: device
+      prompt: "Enter name of the USB device"
+      private: false
+      default: "sda"
+  vars:
+    destination_dir: "/mnt"
+    target_device: "/dev/{{ device }}"
+  tasks:
+    - name: Get only 'devices, mount' facts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - devices
+          - mounts
+    - name: Basic setup and verification for target system
+      block:
+        - name: Facts for {{ target_device }}
+          community.general.parted:
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_parted_data
+        - name: Calculate disk size
+          debug:
+            msg: "{{ ansible_devices[device] }}"
+        - name: Calculate available space on USB device and save it as a fact
+          ansible.builtin.set_fact:
+            total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize']| int) * (ansible_devices[device]['sectors']|int) }}"
+            cacheable: yes
+          when: target_parted_data is defined
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ ansible_devices[device].size }}, {{ total_usb_disk_space }} bytes"
+          when: target_parted_data is defined
+```
+
+See it in action:
+
+[![asciicast](https://asciinema.org/a/553183.svg)](https://asciinema.org/a/553183)
+
+Now that we know the size of the disk, we should also get how much disk our backup will take:
+
+__TODO__
+
+### Putting everything together
 Here is how we can implement these requirements:
 
 ```yaml

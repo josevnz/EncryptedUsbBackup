@@ -5,31 +5,38 @@
 # 3. Some environment variables MUST be defined on the ansible CLI
 # How to run:
 # ```ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml```
+# ```ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml```
 # Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
 ---
 - name: Take an empty USB disk and copy user home directory into an encrypted partition
   hosts: localhost
   connection: local
   become: true
+  gather_facts: true
+  vars_prompt:
+    - name: source_dir
+      prompt: "Enter name of the directory to back up"
+      private: false
+      default: "/home/josevnz"
+    - name: device
+      prompt: "Enter name of the USB device"
+      private: false
+      default: "sda"
+    - name: passphrase
+      prompt: "Enter the passphrase to be used to protect the target device"
+      private: true
+    - name: verify
+      prompt: "Verify backup at the end (leave empty to skip)"
+      private: false
   vars:
     volgrp: "usbluks_vg"
     logicalvol: "backuplv"
     cryptns: "usbluks"
     cryptdevice: "/dev/mapper/{{ cryptns }}"
     destination_dir: "/mnt"
-  vars_prompt:
-    - name: source_dir
-      prompt: "Enter name of the directory to back up"
-      private: false
-      default: "/home/josevnz"
-    - name: target_device
-      prompt: "Enter name of the USB device"
-      private: false
-      default: "/dev/sda"
-    - name: passphrase
-      prompt: "Enter the passphrase to be used to protect the target device"
-      private: true
+    target_device: "/dev/{{ device }}"
   tasks:
+
     - name: Basic setup and verification for target system
       block:
         - name: Facts for {{ target_device }}
@@ -37,42 +44,45 @@
             device: "{{ target_device }}"
             state: "info"
             unit: "GB"
-          register: target_facts
+          register: target_parted_data
           tags: parted_info
-
         - name: Print facts for {{ target_device }}
           ansible.builtin.debug:
-            msg: "{{ target_facts }}"
-          when: target_facts is defined
+            msg: "{{ target_parted_data }}"
+          when: target_parted_data is defined
           tags: print_facts
         - name: Unmount USB drive
           ansible.posix.mount:
             path: "{{ destination_dir }}"
             state: absent
-          when: target_facts is defined
+          when: target_parted_data is defined
           tags: unmount
-        - name: Destroy existing partition if found, update target_facts
+        - name: Install f3 (test for fake flash drives and cards)
+          ansible.builtin.dnf:
+            name: f3
+            state: installed
+          tags: f3install
+        - name: Check if USB device is a fake one with f3
+          ansible.builtin.command: "/usr/bin/f3probe {{ target_device }}"
+          register: f3_run
+          when: target_parted_data is defined
+          tags: f3_fake
+        - name: Destroy existing partition if found, update target_parted_data
           community.general.parted:
             device: "{{ target_device }}"
             number: 1
             state: "absent"
             unit: "GB"
-          when: target_facts is defined and destroy_partition is defined
-          register: target_facts
+          when: target_parted_data is defined and destroy_partition is defined
+          register: target_parted_data
           tags: destroy_partition
-
-        - name: Abort with an error If there are any partitions for {{ target_device }}
+        - name: Abort with an error If there are still any partitions for {{ target_device }}
           ansible.builtin.debug:
             msg: -|
-              {{ target_device }} is already partitioned, {{ target_facts['partitions'] }}.
-              Size is {{ target_facts['disk']['size'] }} GB
-          failed_when: target_facts['partitions'] is defined and (target_facts['partitions'] | length > 0) and not ansible_check_mode
+              {{ target_device }} is already partitioned, {{ target_parted_data['partitions'] }}.
+              Size is {{ target_parted_data['disk']['size'] }} GB
+          failed_when: target_parted_data['partitions'] is defined and (target_parted_data['partitions'] | length > 0) and not ansible_check_mode
           tags: fail_on_existing_part
-
-        - name: Install crysetup
-          ansible.builtin.dnf:
-            name: cryptsetup
-            state: installed
 
     - name: Get destination device details
       block:
@@ -105,6 +115,11 @@
 
     - name: LUKS and filesystem tasks
       block:
+        - name: Install crysetup
+          ansible.builtin.dnf:
+            name: cryptsetup
+            state: installed
+          tags: crysetup
         - name: Create LUKS container with passphrase
           community.crypto.luks_device:
             device: "{{ target_device }}1"
@@ -167,3 +182,31 @@
               - "--exclude .cache"
               - "--exclude .gradle/caches"
           tags: backup
+
+    - name: Backup verification
+      when: verify is defined  # This task is slow
+      block:
+        - name: Facts for {{ target_device }}
+          community.general.parted:
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_parted_data
+          tags: usb_drive_facts
+        - name: Unmount USB drive
+          ansible.posix.mount:
+            path: "{{ destination_dir }}"
+            state: absent
+          when: target_parted_data is defined
+          tags: unmount_check
+        - name: Install e2fsprogs (badblocks, etc)
+          ansible.builtin.dnf:
+            name: e2fsprogs
+            state: installed
+          tags: e2fsprogs
+        - name: Verify disk integrity, non-destructive read
+          ansible.builtin.command: "/usr/sbin/badblocks -n {{ target_device }}"
+          register: badblocks_run
+          when: target_parted_data is defined
+          tags: bad_blocks
+      tags: backup_block
