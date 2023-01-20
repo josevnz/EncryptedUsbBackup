@@ -234,7 +234,7 @@ Depending of the size of the disk this task can be quick or take a long time, fo
           when: f3_capture is defined
 ```
 
-I don't want to force this task every time I run my encrypted backup with media I know is good, so unless to enable it on the prompt it will not run.
+I don't want to force this task every time I run my encrypted backup with media I know is good, so unless is enabled on the prompt it will not run.
 
 How does it look ([running_f3.yaml](running_f3.yaml))?:
 
