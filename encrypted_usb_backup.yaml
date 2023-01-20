@@ -5,14 +5,13 @@
 # 3. Some environment variables MUST be defined on the ansible CLI
 # How to run:
 # ```ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml```
-# ```ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml```
 # Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
 ---
 - name: Take an empty USB disk and copy user home directory into an encrypted partition
   hosts: localhost
   connection: local
   become: true
-  gather_facts: true
+  gather_facts: false
   vars_prompt:
     - name: source_dir
       prompt: "Enter name of the directory to back up"
@@ -36,11 +35,48 @@
     destination_dir: "/mnt"
     target_device: "/dev/{{ device }}"
   tasks:
-
     - name: Basic setup and verification for target system
       block:
+        - name: Get only 'devices, mount' facts
+          ansible.builtin.setup:
+            gather_subset:
+              - '!all'
+              - '!min'
+              - devices
+              - mounts
+          tags: facts_subset
         - name: Facts for {{ target_device }}
           community.general.parted:
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_parted_data
+          tags: parted_data
+        - name: Calculate available space on USB device and save it as a fact
+          ansible.builtin.set_fact:
+            total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize'] | int) * (ansible_devices[device]['sectors'] | int) }}"
+            cacheable: true
+          when: target_parted_data is defined
+          tags: du
+        - name: Get disk utilization from {{ source_dir }}
+          ansible.builtin.command:
+            argv:
+              - /bin/du
+              - --max-depth=0
+              - --block-size=1
+              - --exclude='*/.cache'
+              - --exclude='*/.gradle/caches'
+              - --exclude='*/Downloads'
+              - "{{ source_dir }}"
+          register: du_capture
+          changed_when: "du_capture.rc != 0"
+          tags: du_capture
+        - name: Process DU output
+          ansible.builtin.set_fact:
+            du: "{{ du_capture.stdout | regex_replace('\\D+') | int }}"
+          tags: du_filter
+        - name: Facts for {{ target_device }}
+          community.general.parted:  # Note this task doesn't use facts
             device: "{{ target_device }}"
             state: "info"
             unit: "GB"
@@ -83,7 +119,6 @@
               Size is {{ target_parted_data['disk']['size'] }} GB
           failed_when: target_parted_data['partitions'] is defined and (target_parted_data['partitions'] | length > 0) and not ansible_check_mode
           tags: fail_on_existing_part
-
     - name: Get destination device details
       block:
         - name: Get info on destination partition
@@ -97,7 +132,6 @@
           ansible.builtin.debug:
             msg: "{{ info_output }}"
           tags: parted_print
-
     - name: Create partition
       block:
         - name: Create new partition
@@ -112,7 +146,6 @@
         - name: Parted failed
           ansible.builtin.fail:
             msg: 'Parted failed:  {{ parted_output }}'
-
     - name: LUKS and filesystem tasks
       block:
         - name: Install crysetup
@@ -167,6 +200,7 @@
           when: not ansible_check_mode
           tags: mount
     - name: Backup stage
+      tags: backup
       block:
         - name: Backup using rsync
           ansible.posix.synchronize:
@@ -181,10 +215,9 @@
               - "--exclude Downloads"
               - "--exclude .cache"
               - "--exclude .gradle/caches"
-          tags: backup
-
     - name: Backup verification
       when: verify is defined  # This task is slow
+      tags: backup_block
       block:
         - name: Facts for {{ target_device }}
           community.general.parted:
@@ -209,4 +242,3 @@
           register: badblocks_run
           when: target_parted_data is defined
           tags: bad_blocks
-      tags: backup_block
