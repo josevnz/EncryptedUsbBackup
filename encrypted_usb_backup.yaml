@@ -26,7 +26,8 @@
       prompt: "Enter the passphrase to be used to protect the target device"
       private: true
     - name: paranoid
-      prompt: "Leave blank if you don't want to check the USB drive real capacity with f3"
+      prompt: "Check the USB drive real capacity with f3 (y/n)"
+      default: "n"
       private: false
     - name: verify
       prompt: "Verify backup at the end (y/n)"
@@ -113,7 +114,7 @@
         - name: Check if USB device is a fake one with f3
           ansible.builtin.command: "/usr/bin/f3probe {{ target_device }}"
           register: f3_run
-          when: target_parted_data is defined
+          when: target_parted_data is defined and paranoid is defined and paranoid == "y"
           tags: f3_fake
         - name: Destroy existing partition if found, update target_parted_data
           community.general.parted:
