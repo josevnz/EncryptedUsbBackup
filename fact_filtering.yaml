@@ -14,7 +14,6 @@
       private: false
       default: "sda"
   vars:
-    destination_dir: "/mnt"
     target_device: "/dev/{{ device }}"
   tasks:
     - name: Get only 'devices, mount' facts

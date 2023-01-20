@@ -108,7 +108,6 @@ After that you can use the facts in any way you see fit (check [fact_filtering.y
       private: false
       default: "sda"
   vars:
-    destination_dir: "/mnt"
     target_device: "/dev/{{ device }}"
   tasks:
     - name: Get only 'devices, mount' facts
@@ -144,9 +143,56 @@ See it in action:
 
 [![asciicast](https://asciinema.org/a/553183.svg)](https://asciinema.org/a/553183)
 
-Now that we know the size of the disk, we should also get how much disk our backup will take:
+Now that we know the size of the disk, we should also get how much disk our backup will take. Ansible doesn't have a du task so we wrap our own.
 
-__TODO__
+### How much disk space we will have to backup
+
+We do a few things here:
+
+1. Capture the output of the du command, and report if it changes only the return code
+2. Filter the output od the ```du``` command so we can use it later.
+
+```yaml
+---
+- name: Disk utilization capture
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_prompt:
+    - name: source_dir
+      prompt: "Enter name of the directory to back up"
+      private: false
+      default: "/home/josevnz"
+  tasks:
+    - name: Capture disk utilization on {{ source_dir }}
+      block:
+        - name: Get disk utilization from {{ source_dir }}
+          ansible.builtin.command:
+            argv:
+              - /bin/du
+              - --max-depth=0
+              - --block-size=1
+              - --exclude='*/.cache'
+              - --exclude='*/.gradle/caches'
+              - --exclude='*/Downloads'
+              - "{{ source_dir }}"
+          register: du_capture
+          changed_when: "du_capture.rc != 0"
+        - name: Process DU output
+          ansible.builtin.set_fact:
+            du: "{{ du_capture.stdout | regex_replace('\\D+') | int }}"
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ source_dir }} -> {{ du }} bytes"
+          when: du_capture is defined
+```
+
+Let's see it running:
+
+[![asciicast](https://asciinema.org/a/553200.svg)](https://asciinema.org/a/553200)
+
+With this information we can test before hand if the USB drive has enough space to save our files.
 
 ### Putting everything together
 Here is how we can implement these requirements:

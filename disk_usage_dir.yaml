@@ -1,0 +1,37 @@
+# This Ansible playbook just shows you how capture and process disk utilization of a given directory
+# How to run:
+# ```ansible-playbook disk_usage_dir.yaml```
+# Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
+---
+- name: Disk utilization capture
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_prompt:
+    - name: source_dir
+      prompt: "Enter name of the directory to back up"
+      private: false
+      default: "/home/josevnz"
+  tasks:
+    - name: Capture disk utilization on {{ source_dir }}
+      block:
+        - name: Get disk utilization from {{ source_dir }}
+          ansible.builtin.command:
+            argv:
+              - /bin/du
+              - --max-depth=0
+              - --block-size=1
+              - --exclude='*/.cache'
+              - --exclude='*/.gradle/caches'
+              - --exclude='*/Downloads'
+              - "{{ source_dir }}"
+          register: du_capture
+          changed_when: "du_capture.rc != 0"
+        - name: Process DU output
+          ansible.builtin.set_fact:
+            du: "{{ du_capture.stdout | regex_replace('\\D+') | int }}"
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ source_dir }} -> {{ du }} bytes"
+          when: du_capture is defined
