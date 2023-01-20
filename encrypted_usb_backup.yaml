@@ -85,7 +85,7 @@
           ansible.builtin.assert:
             that:
               - du < total_usb_disk_space
-            fail_msg: "Not enough disk space on USB drive! {{ du }} < {{ total_usb_disk_space }}"
+            fail_msg: "Not enough disk space on USB drive! {{ du | int | human_readable(unit='G') }} > {{ total_usb_disk_space | int | human_readable(unit='G') }}"
             success_msg: "We have enough space to make the backup!"
           tags: disk_space_check
         - name: Facts for {{ target_device }}

@@ -194,6 +194,20 @@ Let's see it running:
 
 With this information we can test before hand if the USB drive has enough space to save our files.
 
+```yaml
+        - name: Check if destination USB drive has enough space to store our backup
+          ansible.builtin.assert:
+            that:
+              - du < total_usb_disk_space
+            fail_msg: "Not enough disk space on USB drive! {{ du | int | human_readable(unit='G') }} > {{ total_usb_disk_space | int | human_readable(unit='G') }}"
+            success_msg: "We have enough space to make the backup!"
+          tags: disk_space_check
+```
+
+If the destination is too small we can get abort the whole operation:
+
+
+
 So we are good to go, right? Well, we live on an imperfect world where [counterfit USB drives are sold](https://datarecovery.com/2022/03/the-2tb-flash-drive-scam-why-high-capacity-flash-drives-are-fakes/), they do tricks to advertise higher capacity that is really supported.
 
 Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/introduction.html) we can run with brand new media to make sure the capacity is indeed what we think we purchased, will cover that next
