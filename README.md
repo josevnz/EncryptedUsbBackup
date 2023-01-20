@@ -212,7 +212,11 @@ So we are good to go, right? Well, we live on an imperfect world where [counterf
 
 Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/introduction.html) we can run with brand new media to make sure the capacity is indeed what we think we purchased, will cover that next
 
-### Trust but verify
+### Trust but verify (than the disk is indeed legitimate)
+
+Or [puting it in another way](https://en.wikipedia.org/wiki/Trust,_but_verify):
+
+> To test men and verify what has actually been done— this, this again this alone is now the main feature of all our activities, of our whole policy
 
 Depending of the size of the disk this task can be quick or take a long time, for this part
 
