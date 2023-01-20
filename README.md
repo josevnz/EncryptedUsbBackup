@@ -198,8 +198,8 @@ With this information we can test before hand if the USB drive has enough space 
         - name: Check if destination USB drive has enough space to store our backup
           ansible.builtin.assert:
             that:
-              - du < total_usb_disk_space
-            fail_msg: "Not enough disk space on USB drive! {{ du | int | human_readable(unit='G') }} > {{ total_usb_disk_space | int | human_readable(unit='G') }}"
+              - ( total_usb_disk_space | int ) > ( du | int)
+            fail_msg: "Not enough disk space on USB drive! {{ du | int | human_readable() }} > {{ total_usb_disk_space | int | human_readable() }}"
             success_msg: "We have enough space to make the backup!"
           tags: disk_space_check
 ```
