@@ -149,8 +149,8 @@ Now that we know the size of the disk, we should also get how much disk our back
 
 We do a few things here:
 
-1. Capture the output of the du command, and report if it changes only the return code
-2. Filter the output od the ```du``` command so we can use it later.
+1. Capture the [output of the du command](disk_usage_dir.yaml), and [report if it changes](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html#defining-changed) only the return code
+2. Filter the output of the [du](https://www.man7.org/linux/man-pages/man1/du.1.html) command so we can use it later.
 
 ```yaml
 ---
