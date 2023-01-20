@@ -206,7 +206,7 @@ With this information we can test before hand if the USB drive has enough space 
 
 If the destination is too small we can get abort the whole operation:
 
-
+[![asciicast](https://asciinema.org/a/553214.svg)](https://asciinema.org/a/553214)
 
 So we are good to go, right? Well, we live on an imperfect world where [counterfit USB drives are sold](https://datarecovery.com/2022/03/the-2tb-flash-drive-scam-why-high-capacity-flash-drives-are-fakes/), they do tricks to advertise higher capacity that is really supported.
 
