@@ -12,6 +12,7 @@
   connection: local
   become: true
   gather_facts: false
+  any_errors_fatal: true
   vars_prompt:
     - name: source_dir
       prompt: "Enter name of the directory to back up"
@@ -61,7 +62,7 @@
             total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize'] | int) * (ansible_devices[device]['sectors'] | int) }}"
             cacheable: true
           when: target_parted_data is defined
-          tags: du
+          tags: space_usb
         - name: Get disk utilization from {{ source_dir }}
           ansible.builtin.command:
             argv:
@@ -79,6 +80,13 @@
           ansible.builtin.set_fact:
             du: "{{ du_capture.stdout | regex_replace('\\D+') | int }}"
           tags: du_filter
+        - name: Check if destination USB drive has enough space to store our backup
+          ansible.builtin.assert:
+            that:
+              - du < total_usb_disk_space
+            fail_msg: "Not enough disk space on USB drive! {{ du }} < {{ total_usb_disk_space }}"
+            success_msg: "We have enough space to make the backup!"
+          tags: disk_space_check
         - name: Facts for {{ target_device }}
           community.general.parted:  # Note this task doesn't use facts
             device: "{{ target_device }}"
