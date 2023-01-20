@@ -217,7 +217,21 @@ Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/i
 Depending of the size of the disk this task can be quick or take a long time, for this part
 
 ```yaml
-
+  tasks:
+    - name: Verify with f3 {{ device }}
+      block:
+        - name: Testing with f3 {{ device }}
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/f3probe
+              - "{{ target_device }}"
+          register: f3_capture
+          changed_when: "f3_capture.rc != 0"
+          when: paranoid is defined and paranoid == "y"
+        - name: Print facts for {{ target_device }}
+          ansible.builtin.debug:
+            msg: "{{ target_device }} -> {{ f3_capture }}"
+          when: f3_capture is defined
 ```
 
 I don't want to force this task every time I run my encrypted backup with media I know is good, so unless to enable it on the prompt it will not run.
