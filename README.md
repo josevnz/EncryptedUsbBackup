@@ -93,7 +93,7 @@ Every time you run an Ansible playbook, it collects facts about your target syst
 
 First disable the general 'gather_facts', then override with a task below using the setup module, just enabling devices and mounts.
 
-After that you can use the facts in any way you see fit:
+After that you can use the facts in any way you see fit (check [fact_filtering.yaml](fact_filtering.yaml) to see how is done):
 
 ```yaml
 ---
