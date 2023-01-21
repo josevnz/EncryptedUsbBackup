@@ -11,21 +11,16 @@ set -e
 # Partition the disk, single partition on /dev/sda1 (type Linux)
 sudo fdisk /dev/sda
 sudo partprobe /dev/sda
-
 # Encrypt the partition, https://www.redhat.com/sysadmin/disk-encryption-luks
 sudo cryptsetup luksFormat /dev/sda1
 sudo cryptsetup luksOpen /dev/sda1 usbluks
-
 # Create a logical volume on the encrypted disk
 sudo vgcreate usbluks_vg /dev/mapper/usbluks
 sudo lvcreate -n usbluks_logvol -L 118G+ usbluks_vg
-
 # Format the disk with btrfs, https://btrfs.readthedocs.io/en/latest/mkfs.btrfs.html
 sudo mkfs.btrfs --mixed --data SINGLE --metadata SINGLE /dev/usbluks_vg/usbluks_logvol
-
 # Mount our new volume
 sudo mount /dev/usbluks_vg/usbluks_logvol /mnt/
-
 # Backup my files
 sudo tar --create --directory /home --file -| tar --directory /mnt --extract --file -
 ```
@@ -265,84 +260,157 @@ localhost                  : ok=2    changed=0    unreachable=0    failed=0    s
 
 Took 5+ minutes on a small but slow USB drive.
 
-### Putting everything together
-Here is how we can implement these requirements:
+### Putting everything together, final playbook
+
+Here is how we can implement these requirements, first capture user choices interactively:
 
 ```yaml
+---
 - name: Take an empty USB disk and copy user home directory into an encrypted partition
   hosts: localhost
   connection: local
   become: true
-  vars:
-    volgrp: usbluks_vg
-    logicalvol: backuplv
-    cryptns: usbluks
-    cryptdevice: "/dev/mapper/{{ cryptns }}"
-    destination_dir: /mnt
+  gather_facts: false
+  any_errors_fatal: true
   vars_prompt:
     - name: source_dir
       prompt: "Enter name of the directory to back up"
       private: false
       default: "/home/josevnz"
-    - name: target_device
+    - name: device
       prompt: "Enter name of the USB device"
       private: false
-      default: "/dev/sda"
+      default: "sda"
     - name: passphrase
       prompt: "Enter the passphrase to be used to protect the target device"
       private: true
+    - name: destroy_partition
+      prompt: "Destroy any existing partitions (y/n)?"
+      default: "y"
+      private: false
+    - name: cryptns
+      prompt: "Name of the luks device. Strongly suggested you pick one"
+      default: "{{ query('community.general.random_string', upper=false, numbers=false, special=false, length=4)[0] }}"
+      private: false
+    - name: paranoid
+      prompt: "Check the USB drive real capacity with f3 (y/n)"
+      default: "n"
+      private: false
+    - name: verify
+      prompt: "Verify backup at the end (y/n)"
+      default: "n"
+      private: false
+  vars:
+    volgrp: "{{ cryptns }}_vg"
+    logicalvol: "backuplv"
+    cryptns: "usbluks"
+    cryptdevice: "/dev/mapper/{{ cryptns }}"
+    destination_dir: "/mnt"
+    target_device: "/dev/{{ device }}"
 ```
 
 Next step is to define the following actions:
-1. Get [partition details](https://docs.ansible.com/ansible/latest/collections/community/general/parted_module.html) and destroy the destination if already exists. We use a [block](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) to make to group these operations together (like installing crysetup at the end if missing).
+
+1. Get [partition details](https://docs.ansible.com/ansible/latest/collections/community/general/parted_module.html), validate devices and destroy the destination if already exists. We use a [block](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) to make to group these operations together (like installing crysetup at the end if missing).
 ```yaml
   tasks:
     - name: Basic setup and verification for target system
       block:
+        - name: Get only 'devices, mount' facts
+          ansible.builtin.setup:
+            gather_subset:
+              - '!all'
+              - '!min'
+              - devices
+              - mounts
+          tags: facts_subset
         - name: Facts for {{ target_device }}
           community.general.parted:
             device: "{{ target_device }}"
             state: "info"
             unit: "GB"
-          register: target_facts
+          register: target_parted_data
+          tags: parted_data
+        - name: Calculate available space on USB device and save it as a fact
+          ansible.builtin.set_fact:
+            total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize'] | int) * (ansible_devices[device]['sectors'] | int) }}"
+            cacheable: true
+          when: target_parted_data is defined
+          tags: space_usb
+        - name: Get disk utilization from {{ source_dir }}
+          ansible.builtin.command:
+            argv:
+              - /bin/du
+              - --max-depth=0
+              - --block-size=1
+              - --exclude='*/.cache'
+              - --exclude='*/.gradle/caches'
+              - --exclude='*/Downloads'
+              - "{{ source_dir }}"
+          register: du_capture
+          changed_when: "du_capture.rc != 0"
+          tags: du_capture
+        - name: Process DU output
+          ansible.builtin.set_fact:
+            du: "{{ du_capture.stdout | regex_replace('\\D+') | int }}"
+            type: integer
+          tags: du_filter
+        - name: Check if destination USB drive has enough space to store our backup
+          ansible.builtin.assert:
+            that:
+              - ( total_usb_disk_space | int ) > ( du | int)
+            fail_msg: "Not enough disk space on USB drive! {{ du | int | human_readable() }} > {{ total_usb_disk_space | int | human_readable() }}"
+            success_msg: "We have enough space to make the backup!"
+          tags: disk_space_check
+        - name: Facts for {{ target_device }}
+          community.general.parted:  # Note this task doesn't use facts
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_parted_data
           tags: parted_info
-
         - name: Print facts for {{ target_device }}
           ansible.builtin.debug:
-            msg: "{{ target_facts }}"
-          when: target_facts is defined
+            msg: "{{ target_parted_data }}"
+          when: target_parted_data is defined
           tags: print_facts
         - name: Unmount USB drive
           ansible.posix.mount:
             path: "{{ destination_dir }}"
             state: absent
-          when: target_facts is defined
+          when: target_parted_data is defined
           tags: unmount
-        - name: Destroy existing partition if found, update target_facts
+        - name: Install f3 (test for fake flash drives and cards)
+          ansible.builtin.dnf:
+            name: f3
+            state: installed
+          tags: f3install
+        - name: Check if USB device is a fake one with f3
+          ansible.builtin.command: "/usr/bin/f3probe {{ target_device }}"
+          register: f3_run
+          when: target_parted_data is defined and paranoid is defined and paranoid == "y"
+          tags: f3_fake
+        - name: Destroy existing partition if found, update target_parted_data
           community.general.parted:
             device: "{{ target_device }}"
             number: 1
             state: "absent"
             unit: "GB"
-          when: target_facts is defined and destroy_partition is defined
-          register: target_facts
+          when: target_parted_data is defined and destroy_partition == "y"
+          register: target_parted_data
           tags: destroy_partition
-
-        - name: Abort with an error If there are any partitions for {{ target_device }}
+        - name: "Abort with an error If there are still any partitions for {{ target_device }}"
           ansible.builtin.debug:
             msg: -|
-              {{ target_device }} is already partitioned, {{ target_facts['partitions'] }}.
-              Size is {{ target_facts['disk']['size'] }} GB
-          failed_when: target_facts['partitions'] is defined and (target_facts['partitions'] | length > 0) and not ansible_check_mode
+              {{ target_device }} is already partitioned, {{ target_parted_data['partitions'] }}.
+              Size is {{ target_parted_data['disk']['size'] }} GB
+          failed_when: target_parted_data['partitions'] is defined and (target_parted_data['partitions'] | length > 0) and not ansible_check_mode
           tags: fail_on_existing_part
-        - name: Install crysetup
-          ansible.builtin.dnf:
-            name: cryptsetup
-            state: installed
-```
-2. Create the partition, with some information printout:
-```yaml
     - name: Get destination device details
+```
+2. Create the partition, with some information printout
+```yaml
+    - name: Create partition
       block:
         - name: Get info on destination partition
           community.general.parted:
@@ -355,9 +423,6 @@ Next step is to define the following actions:
           ansible.builtin.debug:
             msg: "{{ info_output }}"
           tags: parted_print
-
-    - name: Create partition
-      block:
         - name: Create new partition
           community.general.parted:
             device: "{{ target_device }}"
@@ -376,6 +441,11 @@ Next step is to define the following actions:
 ```yaml
     - name: LUKS and filesystem tasks
       block:
+        - name: Install crysetup
+          ansible.builtin.dnf:
+            name: cryptsetup
+            state: installed
+          tags: crysetup
         - name: Create LUKS container with passphrase
           community.crypto.luks_device:
             device: "{{ target_device }}1"
@@ -424,11 +494,12 @@ Next step is to define the following actions:
           tags: mount
 ```
 
-Note than we do not want to persist the status of the mounted filesystem across reboots, we will umount the drive as soon we are done with the backup. For that reason we use a temporary fstab (```fstab: /tmp/tmp.fstab```)
+Note than _we do not want_ to persist the status of the mounted filesystem across reboots, we will umount the drive as soon we are done with the backup. For that reason we use a temporary fstab (```fstab: /tmp/tmp.fstab```)
 
 4. Last task is to create the backup on the new encrypted volume using [synchronize](https://docs.ansible.com/ansible/latest/collections/ansible/posix/synchronize_module.html) (frontend for rsync, we pass a few arguments to skip unwanted heavy directories):
 ```yaml
     - name: Backup stage
+      tags: backup
       block:
         - name: Backup using rsync
           ansible.posix.synchronize:
@@ -443,10 +514,40 @@ Note than we do not want to persist the status of the mounted filesystem across 
               - "--exclude Downloads"
               - "--exclude .cache"
               - "--exclude .gradle/caches"
-          tags: backup
 ```
 
-Let's test this before running it on our USB drive
+5. Optionally we can verify the media where the backup was written:
+```yaml
+    - name: Backup verification
+      when: verify is defined and verify == "y"
+      tags: backup_block
+      block:
+        - name: Facts for {{ target_device }}
+          community.general.parted:
+            device: "{{ target_device }}"
+            state: "info"
+            unit: "GB"
+          register: target_parted_data
+          tags: usb_drive_facts
+        - name: Unmount USB drive
+          ansible.posix.mount:
+            path: "{{ destination_dir }}"
+            state: absent
+          when: target_parted_data is defined
+          tags: unmount_check
+        - name: Install e2fsprogs (badblocks, etc)
+          ansible.builtin.dnf:
+            name: e2fsprogs
+            state: installed
+          tags: e2fsprogs
+        - name: Verify disk integrity, non-destructive read
+          ansible.builtin.command: "/usr/sbin/badblocks -n {{ target_device }}"
+          register: badblocks_run
+          when: target_parted_data is defined
+          tags: bad_blocks
+```
+
+Now it is time to dry-run this before running it on our USB drive.
 
 ## Fixing style issues and mistakes, doing a dry-run
 
@@ -463,90 +564,110 @@ Then doing a dry-run:
 
 ```shell
 ansible-playbook --check encrypted_usb_backup.yaml
-
-# If you have an existing partition, you can include --extra-vars destroy_partition=yes
-# Nothing will get deleted if --check is also passed
-
-ansible-playbook --check --extra-vars destroy_partition=yes  encrypted_usb_backup.yaml
 ```
 
 ## Making the backup, full run
 
-Now after all this work we can make our backup:
+Below you can see an example of how your backup session may look like (without the f3 and backup verification):
 
 ```shell
-ansible-playbook --check --extra-vars destroy_partition=yes --tags parted_info,print_facts  encrypted_usb_backup.yaml
-```
+[josevnz@dmaf5 EncryptedUsbBackup]$ ansible-playbook encrypted_usb_backup.yaml 
+[WARNING]: No inventory was parsed, only implicit localhost is available
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+Enter name of the directory to back up [/home/josevnz]: /home/josevnz/Documents/Domino/
+Enter name of the USB device [sda]: sdc
+Enter the passphrase to be used to protect the target device: 
+Destroy any existing partitions (y/n)? [y]: 
+Name of the luks device. Strongly suggested you pick one [rfjz]: 
+Check the USB drive real capacity with f3 (y/n) [n]: 
+Verify backup at the end (y/n) [n]: 
 
-But most likely you will run it like this, with the option to destroy existing partitions:
+PLAY [Take an empty USB disk and copy user home directory into an encrypted partition] *****************************************************************************************************************************************************
 
-```shell
-ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml
-```
-
-### How does the backup session looks like?
-
-Below you can see an example of how your backup session may look like:
-
-```shell
-(EncryptedUsbDriveBackup) [josevnz@dmaf5 EncryptedUsbDriveBackup]$ ansible-playbook --extra-vars destroy_partition=yes encrypted_usb_backup.yaml
-Enter the passphrase to be used to protect /dev/sda: 
-Enter name of the directory to back up [/home/josevnz]: 
-
-PLAY [Take an empty USB disk and copy user home directory into an encrypted partition] ****************************************************************************
-
-TASK [Gathering Facts] ********************************************************************************************************************************************
+TASK [Get only 'devices, mount' facts] *****************************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Facts for /dev/sda] *****************************************************************************************************************************************
+TASK [Facts for /dev/sdc] ******************************************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Print facts for /dev/sda] ***********************************************************************************************************************************
+TASK [Calculate available space on USB device and save it as a fact] ***********************************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Get disk utilization from /home/josevnz/Documents/Domino/] ***************************************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Process DU output] *******************************************************************************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Check if destination USB drive has enough space to store our backup] *****************************************************************************************************************************************************************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "We have enough space to make the backup!"
+}
+
+TASK [Facts for /dev/sdc] ******************************************************************************************************************************************************************************************************************
+ok: [localhost]
+
+TASK [Print facts for /dev/sdc] ************************************************************************************************************************************************************************************************************
 ok: [localhost] => {
     "msg": {
         "changed": false,
         "disk": {
-            "dev": "/dev/sda",
-            "logical_block": 4096,
-            "model": "JMicron Tech",
-            "physical_block": 4096,
-            "size": 128.0,
+            "dev": "/dev/sdc",
+            "logical_block": 512,
+            "model": "General UDisk",
+            "physical_block": 512,
+            "size": 1.01,
             "table": "msdos",
             "unit": "gb"
         },
         "failed": false,
-        "partitions": [],
+        "partitions": [
+            {
+                "begin": 0.0,
+                "end": 1.01,
+                "flags": [],
+                "fstype": "",
+                "name": "",
+                "num": 1,
+                "size": 1.01,
+                "unit": "gb"
+            }
+        ],
         "script": "unit 'GB' print"
     }
 }
 
-TASK [Unmount USB drive] ******************************************************************************************************************************************
+TASK [Unmount USB drive] *******************************************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Destroy existing partition if found, update target_facts] ***************************************************************************************************
+TASK [Install f3 (test for fake flash drives and cards)] ***********************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [If there are any partitions for /dev/sda, abort with an error] **********************************************************************************************
+TASK [Check if USB device is a fake one with f3] *******************************************************************************************************************************************************************************************
+skipping: [localhost]
+
+TASK [Destroy existing partition if found, update target_parted_data] **********************************************************************************************************************************************************************
+changed: [localhost]
+
+TASK [Abort with an error If there are still any partitions for /dev/sdc] ******************************************************************************************************************************************************************
 ok: [localhost] => {
-    "msg": "-| /dev/sda is already partitioned ({'sda1': {'links': {'ids': ['usb-JMicron_Tech_DD56419883ECF-0:0-part1'], 'uuids': ['e6e287e7-c6ac-43ad-9a7e-efc883066b61'], 'labels': [], 'masters': ['dm-0']}, 'start': '524280', 'sectors': '249033000', 'sectorsize': 512, 'size': '118.75 GB', 'uuid': 'e6e287e7-c6ac-43ad-9a7e-efc883066b61', 'holders': ['usbluks']}}), []. Size is 128.0 GB"
+    "msg": "-| /dev/sdc is already partitioned, []. Size is 1.01 GB"
 }
 
-TASK [Install crysetup] *******************************************************************************************************************************************
+TASK [Get info on destination partition] ***************************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Get info on destination partition] **************************************************************************************************************************
-ok: [localhost]
-
-TASK [Print info_output] ******************************************************************************************************************************************
+TASK [Print info_output] *******************************************************************************************************************************************************************************************************************
 ok: [localhost] => {
     "msg": {
         "changed": false,
         "disk": {
-            "dev": "/dev/sda",
-            "logical_block": 4096,
-            "model": "JMicron Tech",
-            "physical_block": 4096,
-            "size": 124952576.0,
+            "dev": "/dev/sdc",
+            "logical_block": 512,
+            "model": "General UDisk",
+            "physical_block": 512,
+            "size": 983040.0,
             "table": "msdos",
             "unit": "kib"
         },
@@ -556,32 +677,48 @@ ok: [localhost] => {
     }
 }
 
-TASK [Create new partition] ***************************************************************************************************************************************
+TASK [Create new partition] ****************************************************************************************************************************************************************************************************************
 changed: [localhost]
 
-TASK [Create LUKS container with passphrase] **********************************************************************************************************************
+TASK [Install crysetup] ********************************************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Open luks container] ****************************************************************************************************************************************
+TASK [Create LUKS container with passphrase] ***********************************************************************************************************************************************************************************************
 ok: [localhost]
 
-TASK [Create usbluks_vg on /dev/mapper/usbluks] *******************************************************************************************************************
-ok: [localhost]
-
-TASK [Create a logvol in my new vg] *******************************************************************************************************************************
-ok: [localhost]
-
-TASK [Create a filesystem for the USB drive (man mkfs.btrfs for options explanation)] *****************************************************************************
+TASK [Open luks container] *****************************************************************************************************************************************************************************************************************
 changed: [localhost]
 
-TASK [Mount USB drive] ********************************************************************************************************************************************
+TASK [Create /dev/mapper/rfjz] *************************************************************************************************************************************************************************************************************
 changed: [localhost]
 
-TASK [Backup /home/josevnz to /mnt//mnt] **************************************************************************************************************************
+TASK [Create a logvol in my new vg] ********************************************************************************************************************************************************************************************************
 changed: [localhost]
 
-PLAY RECAP ********************************************************************************************************************************************************
-localhost                  : ok=17   changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+TASK [Create a filesystem for the USB drive (man mkfs.btrfs for options explanation)] ******************************************************************************************************************************************************
+changed: [localhost]
+
+TASK [Mount USB drive (use a dummy fstab to avoid changing real /etc/fstab)] ***************************************************************************************************************************************************************
+changed: [localhost]
+
+TASK [Backup using rsync] ******************************************************************************************************************************************************************************************************************
+changed: [localhost]
+
+TASK [Facts for /dev/sdc] ******************************************************************************************************************************************************************************************************************
+skipping: [localhost]
+
+TASK [Unmount USB drive] *******************************************************************************************************************************************************************************************************************
+skipping: [localhost]
+
+TASK [Install e2fsprogs (badblocks, etc)] **************************************************************************************************************************************************************************************************
+skipping: [localhost]
+
+TASK [Verify disk integrity, non-destructive read] *****************************************************************************************************************************************************************************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************************************************************************************************************************************************************************
+localhost                  : ok=23   changed=8    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
+
 ```
 
 ## Next steps
