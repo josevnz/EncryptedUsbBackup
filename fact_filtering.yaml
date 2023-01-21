@@ -32,11 +32,11 @@
             unit: "GB"
           register: target_parted_data
         - name: Calculate disk size
-          debug:
+          ansible.builtin.debug:
             msg: "{{ ansible_devices[device] }}"
         - name: Calculate available space on USB device and save it as a fact
           ansible.builtin.set_fact:
-            total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize']| int) * (ansible_devices[device]['sectors']|int) }}"
+            total_usb_disk_space: "{{ (ansible_devices[device]['sectorsize'] | int) * (ansible_devices[device]['sectors'] | int) }}"
             cacheable: true
           when: target_parted_data is defined
         - name: Print facts for {{ target_device }}

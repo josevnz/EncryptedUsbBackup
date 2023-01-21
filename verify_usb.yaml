@@ -1,0 +1,44 @@
+# Verify the physical integrity of a USB drive
+# 1. This playbook requires elevated privileges
+# How to run:
+# ```ansible-playbook verify_usb.yaml```
+# Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
+---
+- name: Take an empty USB disk and copy user home directory into an encrypted partition
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars_prompt:
+    - name: device
+      prompt: "Enter name of the USB device"
+      private: false
+      default: "sda"
+    - name: destination_dir
+      prompt: "Is the USB is currently mounted?"
+      default: "/mnt"
+      private: false
+  vars:
+    target_device: "/dev/{{ device }}"
+  tasks:
+    - name: Backup verification
+      when: verify is defined and verify == "y"
+      tags: backup_block
+      block:
+        - name: Unmount USB drive
+          ansible.posix.mount:
+            path: "{{ destination_dir }}"
+            state: absent
+          when: target_parted_data is defined
+          tags: unmount_check
+        - name: Install e2fsprogs (badblocks, etc)
+          ansible.builtin.dnf:
+            name: e2fsprogs
+            state: installed
+          tags: e2fsprogs
+        - name: Verify disk integrity, non-destructive read
+          ansible.builtin.command: "/usr/sbin/badblocks -n {{ target_device }}"
+          register: badblocks_run
+          changed_when: badblocks_run.rc != 0
+          tags: bad_blocks

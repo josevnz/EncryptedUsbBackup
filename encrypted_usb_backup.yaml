@@ -1,8 +1,7 @@
 # Take an empty USB disk and copy user home directory into an encrypted partition
-# This Ansible playbook is:
+# This Ansible playbook:
 # 1. Borrows heavily from article written by [Peter Gervase](https://www.redhat.com/sysadmin/encrypt-single-filesystem)
-# 2. This playbook requires elevated privileges
-# 3. Some environment variables MUST be defined on the ansible CLI
+# 2. Requires elevated privileges
 # How to run:
 # ```ansible-playbook encrypted_usb_backup.yaml```
 # Author: Jose Vicente Nunez (kodegeek.com@protonmail.com)
@@ -35,10 +34,6 @@
       private: false
     - name: paranoid
       prompt: "Check the USB drive real capacity with f3 (y/n)"
-      default: "n"
-      private: false
-    - name: verify
-      prompt: "Verify backup at the end (y/n)"
       default: "n"
       private: false
   vars:
@@ -235,30 +230,3 @@
               - "--exclude Downloads"
               - "--exclude .cache"
               - "--exclude .gradle/caches"
-    - name: Backup verification
-      when: verify is defined and verify == "y"
-      tags: backup_block
-      block:
-        - name: Facts for {{ target_device }}
-          community.general.parted:
-            device: "{{ target_device }}"
-            state: "info"
-            unit: "GB"
-          register: target_parted_data
-          tags: usb_drive_facts
-        - name: Unmount USB drive
-          ansible.posix.mount:
-            path: "{{ destination_dir }}"
-            state: absent
-          when: target_parted_data is defined
-          tags: unmount_check
-        - name: Install e2fsprogs (badblocks, etc)
-          ansible.builtin.dnf:
-            name: e2fsprogs
-            state: installed
-          tags: e2fsprogs
-        - name: Verify disk integrity, non-destructive read
-          ansible.builtin.command: "/usr/sbin/badblocks -n {{ target_device }}"
-          register: badblocks_run
-          when: target_parted_data is defined
-          tags: bad_blocks

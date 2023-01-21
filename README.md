@@ -296,10 +296,6 @@ Here is how we can implement these requirements, first capture user choices inte
       prompt: "Check the USB drive real capacity with f3 (y/n)"
       default: "n"
       private: false
-    - name: verify
-      prompt: "Verify backup at the end (y/n)"
-      default: "n"
-      private: false
   vars:
     volgrp: "{{ cryptns }}_vg"
     logicalvol: "backuplv"
@@ -516,37 +512,6 @@ Note than _we do not want_ to persist the status of the mounted filesystem acros
               - "--exclude .gradle/caches"
 ```
 
-5. Optionally we can verify the media where the backup was written:
-```yaml
-    - name: Backup verification
-      when: verify is defined and verify == "y"
-      tags: backup_block
-      block:
-        - name: Facts for {{ target_device }}
-          community.general.parted:
-            device: "{{ target_device }}"
-            state: "info"
-            unit: "GB"
-          register: target_parted_data
-          tags: usb_drive_facts
-        - name: Unmount USB drive
-          ansible.posix.mount:
-            path: "{{ destination_dir }}"
-            state: absent
-          when: target_parted_data is defined
-          tags: unmount_check
-        - name: Install e2fsprogs (badblocks, etc)
-          ansible.builtin.dnf:
-            name: e2fsprogs
-            state: installed
-          tags: e2fsprogs
-        - name: Verify disk integrity, non-destructive read
-          ansible.builtin.command: "/usr/sbin/badblocks -n {{ target_device }}"
-          register: badblocks_run
-          when: target_parted_data is defined
-          tags: bad_blocks
-```
-
 Now it is time to dry-run this before running it on our USB drive.
 
 ## Fixing style issues and mistakes, doing a dry-run
@@ -580,7 +545,6 @@ Enter the passphrase to be used to protect the target device:
 Destroy any existing partitions (y/n)? [y]: 
 Name of the luks device. Strongly suggested you pick one [rfjz]: 
 Check the USB drive real capacity with f3 (y/n) [n]: 
-Verify backup at the end (y/n) [n]: 
 
 PLAY [Take an empty USB disk and copy user home directory into an encrypted partition] *****************************************************************************************************************************************************
 
@@ -707,18 +671,8 @@ changed: [localhost]
 TASK [Facts for /dev/sdc] ******************************************************************************************************************************************************************************************************************
 skipping: [localhost]
 
-TASK [Unmount USB drive] *******************************************************************************************************************************************************************************************************************
-skipping: [localhost]
-
-TASK [Install e2fsprogs (badblocks, etc)] **************************************************************************************************************************************************************************************************
-skipping: [localhost]
-
-TASK [Verify disk integrity, non-destructive read] *****************************************************************************************************************************************************************************************
-skipping: [localhost]
-
 PLAY RECAP *********************************************************************************************************************************************************************************************************************************
-localhost                  : ok=23   changed=8    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   
-
+localhost                  : ok=19   changed=8    unreachable=0    failed=0    skipped=3    rescued=0    ignored=0   
 ```
 
 ## Next steps
@@ -727,4 +681,5 @@ localhost                  : ok=23   changed=8    unreachable=0    failed=0    s
 * Instead of local use the cloud (but encrypt first!): We used rsync to make a backup to a USB drive, but Ansible can also upload files to [an S3 cloud volume](https://docs.ansible.com/ansible/2.9/modules/s3_sync_module.html). Ideally you should make an archive and encrypt it then with [sops](https://docs.ansible.com/ansible/latest/collections/community/sops/sops_encrypt_module.html) before the upload.
 * If you want to back up more than one user directory you could use [a loop](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_loops.html).
 * This article borrows heavily from article written by [Peter Gervase](https://www.redhat.com/sysadmin/encrypt-single-filesystem), you should spend some time reading it.
+* It is possible to check if the USB has bad blocks, before or after making the backup. I wrote for you a small ansible playbook you can run to see how the program [badblocks](verify_usb.yaml) works.
 * The source code for the complete [Ansible playbook](encrypted_usb_backup.yaml) is here, feel free to download and improve for your specific use case.
