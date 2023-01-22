@@ -25,7 +25,9 @@ sudo mount /dev/usbluks_vg/usbluks_logvol /mnt/
 sudo tar --create --directory /home --file -| tar --directory /mnt --extract --file -
 ```
 
-Not so bad, with bare-minimum error handling. But is this something that we could do also with Ansible?
+Not so bad, with bare-minimum error handling. But is this something that we could have written with a different tool, that knows about provisioning?
+
+I decided to try a similar script with Ansible and see how far I could go. After all the framework has support for all the tools I used on my original backup script, has good error handling and debugging and yet is simple enough to install and use than it didn't feel like an overcomplicated solution. 
 
 Before we do that, let's talk a little about _Pet versus Cattle servers_:
 
@@ -36,7 +38,7 @@ There is an ongoing debate about [how you should treat your servers](https://www
 **Pets**
 > Servers or server pairs that are treated as indispensable or unique systems that can never be down. Typically, they are manually built, managed, and “hand fed”. Examples include mainframes, solitary servers, HA loadbalancers/firewalls (active/active or active/passive), database systems designed as master/slave (active/passive), and so on.
 
-_Bash, Python_ are perfect tools to automate tasks on Pet servers as they are very expressive, and you are not very concerned about uniformity. This doesn
+_Bash, Python_ are perfect tools to automate tasks on Pet servers as they are very expressive, and you are not very concerned about uniformity. This doesn't
 t mean you cannot have an Ansible playbook for such special server, in fact it may be a very good reason to have a dedicated playbook for it/ them.
 
 **Cattle**
@@ -79,12 +81,12 @@ You probably have seen Ansible playbooks before, but this one has a few special 
 
 1. It doesn't use SSH to connect to a remote host. The 'remote' host is localhost (the same machine where the playbook runs), so we use a special time of connection called 'local'
 2. It uses special fact gathering to speed up the device feature detection. Will elaborate more in the next section.
-2. Define variables to make the playbook re-usable, but we need to prompt the user for the values as opposed to defined them on the command line. Pet servers have unique features, so it is better to ask the user for some choices interactively as the playbook runs.
-3. Use tags. If we want to run just parts of this playbook we can skip to the desired target (```ansible-playbook --tag $mytag encrypted_us_backup.yaml```)
+3. Define variables to make the playbook re-usable, but we need to prompt the user for the values as opposed to defined them on the command line. Pet servers have unique features, so it is better to ask the user for some choices interactively as the playbook runs.
+4. Use tags. If we want to run just parts of this playbook we can skip to the desired target (```ansible-playbook --tag $mytag encrypted_us_backup.yaml```)
 
 ### Getting your facts straight
 
-Every time you run an Ansible playbook, it collects facts about your target system, so it can operate properly. But for our task it is overkill and we only need information about the devices, while we can ignore other details like dns, python to mention a few.
+Every time you run an Ansible playbook, it collects facts about your target system, so it can operate properly. But for our task it is overkill, and we only need information about the devices, while we can ignore other details like dns, python to mention a few.
 
 First disable the general 'gather_facts', then override with a task below using the setup module, just enabling devices and mounts.
 
@@ -138,14 +140,14 @@ See it in action:
 
 [![asciicast](https://asciinema.org/a/553183.svg)](https://asciinema.org/a/553183)
 
-Now that we know the size of the disk, we should also get how much disk our backup will take. Ansible doesn't have a du task so we wrap our own.
+Now that we know the size of the disk, we should also get how much disk our backup will take. Ansible doesn't have a du task, so we wrap our own.
 
-### How much disk space we will have to backup
+### How much disk space we will have to back up
 
 We do a few things here:
 
 1. Capture the [output of the du command](disk_usage_dir.yaml), and [report if it changes](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html#defining-changed) only the return code
-2. Filter the output of the [du](https://www.man7.org/linux/man-pages/man1/du.1.html) command so we can use it later.
+2. Filter the output of the [du](https://www.man7.org/linux/man-pages/man1/du.1.html) command, so we can use it later.
 
 ```yaml
 ---
@@ -187,7 +189,7 @@ Let's see it running:
 
 [![asciicast](https://asciinema.org/a/553200.svg)](https://asciinema.org/a/553200)
 
-With this information we can test before hand if the USB drive has enough space to save our files.
+With this information we can test beforehand if the USB drive has enough space to save our files.
 
 ```yaml
         - name: Check if destination USB drive has enough space to store our backup
@@ -205,7 +207,7 @@ If the destination is too small we can get abort the whole operation:
 
 So we are good to go, right? Well, we live on an imperfect world where [counterfit USB drives are sold](https://datarecovery.com/2022/03/the-2tb-flash-drive-scam-why-high-capacity-flash-drives-are-fakes/), they do tricks to advertise higher capacity that is really supported.
 
-Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/introduction.html) we can run with brand new media to make sure the capacity is indeed what we think we purchased, will cover that next
+Using [Open Source tool f3](https://fight-flash-fraud.readthedocs.io/en/latest/introduction.html) we can run with brand-new media to make sure the capacity is indeed what we think we purchased, will cover that next
 
 ### Trust but verify (than the disk is indeed legitimate)
 
@@ -213,7 +215,7 @@ Or [puting it in another way](https://en.wikipedia.org/wiki/Trust,_but_verify):
 
 > To test men and verify what has actually been done— this, this again this alone is now the main feature of all our activities, of our whole policy
 
-Depending of the size of the disk this task can be quick or take a long time, for this part
+Depending on the size of the disk this task can be quick or take a long time, for this part
 
 ```yaml
   tasks:
@@ -307,7 +309,7 @@ Here is how we can implement these requirements, first capture user choices inte
 
 Next step is to define the following actions:
 
-1. Get [partition details](https://docs.ansible.com/ansible/latest/collections/community/general/parted_module.html), validate devices and destroy the destination if already exists. We use a [block](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) to make to group these operations together (like installing crysetup at the end if missing).
+Get [partition details](https://docs.ansible.com/ansible/latest/collections/community/general/parted_module.html), validate devices and destroy the destination if already exists. We use a [block](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) to make to group these operations together (like installing crysetup at the end if missing).
 ```yaml
   tasks:
     - name: Basic setup and verification for target system
@@ -404,7 +406,7 @@ Next step is to define the following actions:
           tags: fail_on_existing_part
     - name: Get destination device details
 ```
-2. Create the partition, with some information printout
+Create the partition, with some information printout
 ```yaml
     - name: Create partition
       block:
@@ -432,7 +434,7 @@ Next step is to define the following actions:
           ansible.builtin.fail:
             msg: 'Parted failed:  {{ parted_output }}'
 ```
-3. Create the encrypted volume, format it and then mount it. Another block:
+Then create the encrypted volume, format it and then mount it. Another block:
 
 ```yaml
     - name: LUKS and filesystem tasks
@@ -492,7 +494,7 @@ Next step is to define the following actions:
 
 Note than _we do not want_ to persist the status of the mounted filesystem across reboots, we will umount the drive as soon we are done with the backup. For that reason we use a temporary fstab (```fstab: /tmp/tmp.fstab```)
 
-4. Last task is to create the backup on the new encrypted volume using [synchronize](https://docs.ansible.com/ansible/latest/collections/ansible/posix/synchronize_module.html) (frontend for rsync, we pass a few arguments to skip unwanted heavy directories):
+Last task is to create the backup on the new encrypted volume using [synchronize](https://docs.ansible.com/ansible/latest/collections/ansible/posix/synchronize_module.html) (frontend for rsync, we pass a few arguments to skip unwanted heavy directories):
 ```yaml
     - name: Backup stage
       tags: backup
@@ -680,6 +682,6 @@ localhost                  : ok=19   changed=8    unreachable=0    failed=0    s
 * If you want to use a GUI for your encrypted backup then you should consider [VeraCrypt](https://www.veracrypt.fr/en/Home.html), which is Open Source and also has a nice wizard to let you through the process. There is a [nice tutorial](https://opensource.com/article/21/4/open-source-encryption) how to do that.
 * Instead of local use the cloud (but encrypt first!): We used rsync to make a backup to a USB drive, but Ansible can also upload files to [an S3 cloud volume](https://docs.ansible.com/ansible/2.9/modules/s3_sync_module.html). Ideally you should make an archive and encrypt it then with [sops](https://docs.ansible.com/ansible/latest/collections/community/sops/sops_encrypt_module.html) before the upload.
 * If you want to back up more than one user directory you could use [a loop](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_loops.html).
-* This article borrows heavily from article written by [Peter Gervase](https://www.redhat.com/sysadmin/encrypt-single-filesystem), you should spend some time reading it.
+* This article borrows heavily from article written by [Peter Gervaise](https://www.redhat.com/sysadmin/encrypt-single-filesystem), you should spend some time reading it.
 * It is possible to check if the USB has bad blocks, before or after making the backup. I wrote for you a small ansible playbook you can run to see how the program [badblocks](verify_usb.yaml) works.
 * The source code for the complete [Ansible playbook](encrypted_usb_backup.yaml) is here, feel free to download and improve for your specific use case.
