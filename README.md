@@ -25,11 +25,17 @@ sudo mount /dev/usbluks_vg/usbluks_logvol /mnt/
 sudo tar --create --directory /home --file -| tar --directory /mnt --extract --file -
 ```
 
-Not so bad, with bare-minimum error handling. But is this something that we could have written with a different tool, that knows about provisioning?
+Not so bad, with bare-minimum error handling. Bash is probably the first choice as is simple to use yet expressive. But we also know that Bash stops being the ideal choice when you want to do something like this as compared with other tool that I really like, Ansible:
 
-I decided to try a similar script with Ansible and see how far I could go. After all the framework has support for all the tools I used on my original backup script, has good error handling and debugging and yet is simple enough to install and use than it didn't feel like an overcomplicated solution. 
+1. Provide [more complete debugging](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_debugger.html). I'm not just talking about ```printf``` statements but also more rich [error handling tools](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_error_handling.html), providing a detailed [stacktrace](https://en.wikipedia.org/wiki/Stack_trace).
+2. [idempotence](https://www.ansible.com/blog/whats-new-in-the-ansible-content-collection-for-kubernetes-1.2), the ability to group your operations in [blocks](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html).
+3. Control how your script runs: [tags](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_tags.html), limit where it runs, do a dry run
+4. Code smell detection tools. Bash [has great tools](https://www.shellcheck.net/) out there, but Ansible has [ansible-lint](https://www.redhat.com/sysadmin/ansible-lint-YAML), [check](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_checkmode.html) flag.
+5. Remote execution: While my script doesn't need it if I ever decide to run this on a [different group of machines](https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html) I know I only need to make a few changes, [support for remote task execution](https://docs.ansible.com/ansible/latest/inventory_guide/connection_details.html) is unmatched.
 
-Before we do that, let's talk a little about _Pet versus Cattle servers_:
+All these capabilities made me re-think the script above and realize than an improved version would be probably too verbose and more difficult to maintain than one written in Ansible.
+
+Before we get started, let's talk a little about _Pet versus Cattle servers_:
 
 ## The difference between Pet versus Cattle servers
 
