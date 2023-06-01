@@ -1,5 +1,7 @@
 # Encrypted USB Drive Backup with Ansible, and a tale of Pets and Cattle
 
+![](mazinger-z.png)
+
 I like to make backups. Yes, there is nothing wrong with me, I think having a failsafe before doing something that cannot be rolled back easily, like installing a new version of your favorite operating system, should be compulsory.
 
 Also, *I don't like to repeat myself*. For that reason I like to write scripts so a successful experience can be repeated, like the following one:
